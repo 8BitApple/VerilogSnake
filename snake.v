@@ -2,10 +2,8 @@
 
 // POTENTIAL ISSUE: Check timing to see if snake can collide with the final
 // piece of the snake (snake should be able to chase itself in a perfect loop)
-// KNOWN ISSUE: Need to make it so snake cannot reverse direction (180 degrees)
-// Maybe rewrite snake body function to track the direction the snake is facing
-// and only allow turning left/right (snake will go forward by default), so that
-// turning changes the forward direction?
+// ^^ Going of of that, check all the block for timing issues. A lot of things
+// are clock triggered right now, but they really don't need to be
 
 ////////////////////////////////////////////////////////////////////////////////
 // MODULE moveSnake
@@ -20,11 +18,12 @@ module moveSnake(X, Y, UP, DOWN, LEFT, RIGHT, ISPAUSED, CLK, RST);
   
   reg [1:0] move_dir; // 00 is up, 01 is down, 10 is left, 11 is right
   
+  // Update move direction (does not allow reversing direction 180 degrees)
   always @(posedge UP or posedge DOWN or posedge LEFT or posedge RIGHT) begin
-    if(UP == 1'b1)    move_dir <= 2'b00;
-    if(DOWN == 1'b1)  move_dir <= 2'b01;
-    if(LEFT == 1'b1)  move_dir <= 2'b10;
-    if(RIGHT == 1'b1) move_dir <= 2'b11;
+    if(UP == 1'b1 && move_dir != 2'b01)     move_dir <= 2'b00;
+    if(DOWN == 1'b1  && move_dir != 2'b00)  move_dir <= 2'b01;
+    if(LEFT == 1'b1 && move_dir != 2'b11)   move_dir <= 2'b10;
+    if(RIGHT == 1'b1  && move_dir != 2'b10) move_dir <= 2'b11;
   end
   
   always @(posedge CLK or posedge RST) begin
@@ -85,30 +84,47 @@ endmodule
 ////////////////////////////////////////////////////////////////////////////////
 // MODULE trackSnake
 // Tracks the snake length and and the location of its body.
+// There is a 256 bit array to pass to other modules and a 2048 bit memory
+// to hold information for this module only
 ////////////////////////////////////////////////////////////////////////////////
-module trackSnake(BODY_POS, LENGTH, X, Y, GOT_ITEM, CLK, RST);
+module trackSnake(BODY_POS, LENGTH, X, Y, GOT_ITEM, RST);
   input [3:0] X, Y;
-  input GOT_ITEM, CLK, RST;
+  input GOT_ITEM, RST;
   output reg [7:0] LENGTH; // Excludes head, big enough to occupy every square
-  output reg [15:0][15:0] BODY_POS; //16x16 array to track if snake is in square
+  output reg [255:0] BODY_POS; // 16x16 array to track snake in square
   
-  reg [7:0] final_pos; // Final position of snake (becomes empty in next frame)
-  reg [7:0] i;
+  // Memory holding 
+  reg [7:0] body_mem [0:255];
 
+  reg [7:0] i;
+  reg [7:0] j;
  
-  always @(posedge CLK or posedge RST) begin
+  always @(posedge GOT_ITEM) LENGTH <= LENGTH + 1;
+  
+  always @(X or Y or posedge RST) begin 
     if(RST == 1'b1) begin
-      LENGTH <= 2;
-      BODY_POS[0] <= 8'b10000011; // Position (8,3)
-      BODY_POS[1] <= 8'b10000010; // Position (8,2)
-      final_pos <= 8'b10000010; // Position (8,2)
-    end else begin
-      BODY_POS[X][Y] <= 1'b1;
-      if(GOT_ITEM == 1'b1)
-        LENGTH <= LENGTH + 1;
-      else begin
-        final_pos <=
+      BODY_POS <= 256'd0; //  Set BODY_POS to 0 everywhere
+      BODY_POS[{X,Y}] <= 1'b1;   // Set all 3 parts of snake to 1
+      BODY_POS[{X,Y-2'b01}] <= 1'b1;
+      BODY_POS[{X,Y-2'b10}] <= 1'b1;
+      LENGTH <= 3;
+      body_mem[0] <= 8'b10000100; // Position (8,4);
+      body_mem[1] <= 8'b10000011; // Position (8,3)
+      body_mem[2] <= 8'b10000010; // Position (8,2)
+    end
+    else begin
+     
+      // Update BODY_POS
+      BODY_POS[{X,Y}] <= 1'b1; // Add new snake head location to array 
+      if(GOT_ITEM == 1'b0) begin
+        BODY_POS[body_mem[LENGTH-1]] <= 1'b0; // Erase end of snake
       end
+      
+      // Update body_mem
+      for(i = 255; i > 0; i = i - 1) begin
+        body_mem[i] <= body_mem[i-1];
+      end
+      body_mem[0] <= {X,Y};
     end
   end
 endmodule
@@ -159,29 +175,33 @@ endmodule
 // MODULE generateItem
 // Generate an item for the snake to get (and notify when successfully gotten)
 ////////////////////////////////////////////////////////////////////////////////
-module generateItem(GOT_ITEM, X, Y, CLK, RST, SEED);
+module generateItem(GOT_ITEM, X, Y, RST, SEED);
   input [3:0] X, Y;
-  input CLK, RST;
+  input RST;
   input [6:0] SEED;
   output reg GOT_ITEM;
   
   reg got_first_item; // Controls whether using init_loc or getRand
   reg [7:0] init_loc; // First 4 bits are X, last 4 bits are Y
-  reg [7:0] item_loc; // First 4 bits are X, last 4 bits are Y
-    
-  always @(negedge RST) init_loc <= SEED;
+  reg [7:0] rand_loc; // First 4 bits are X, last 4 bits are Y
   
-  always @(posedge CLK or posedge RST) begin
+  wire [7:0] item_loc;
+  assign item_loc = (got_first_item) ? rand_loc : init_loc;
+  
+  always @(negedge RST) init_loc <= {1'b1,SEED};
+  
+  always @(X or Y or posedge RST) begin
+    GOT_ITEM <= 0;
     if(RST == 1'b1) begin // Reset button pressed
-      GOT_ITEM <= 0;
       got_first_item <= 0;
     end
-    else if(got_first_item == 1'b0 && item_loc != {X,Y}) begin
-      item_loc <= {1'b1,init_loc};
-    end
+    //else if(got_first_item == 1'b0 && init_loc != {X,Y}) begin
+      //rand_loc <= {1'b1,init_loc};
+    //end
     if(item_loc == {X,Y}) begin	  // Otherwise, use the algorithm
+      got_first_item <= 1'b1;
       GOT_ITEM <= 1;
-      item_loc <= 25; // Change this to be a random number (somehow)
+      rand_loc <= 8'h25; // Change this to be a random number (somehow)
       // Note that this number needs to avoid generation on the snake head
       // or body
     end
