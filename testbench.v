@@ -7,7 +7,7 @@ module snakeGame_tb();
   wire [6:0] SEED;
   wire [9:0] MOVES;
   wire [7:0] LENGTH;
-  wire [255:0][7:0] BODY_POS;
+  wire [255:0] BODY_POS;
   
   moveSnake moveSnake_test(
     .X (X),
@@ -35,7 +35,6 @@ module snakeGame_tb();
     .X (X),
     .Y (Y),
     .GOT_ITEM (GOT_ITEM),
-    .CLK (CLK),
     .RST (RST)
   );
   
@@ -51,7 +50,6 @@ module snakeGame_tb();
     .GOT_ITEM(GOT_ITEM),
     .X (X),
     .Y (Y),
-    .CLK (CLK),
     .RST (RST),
     .SEED (SEED)
   );
@@ -80,11 +78,17 @@ module snakeGame_tb();
     RST = 1;
     #826
     RST = 0;
+    #100
+    PAUSE = 1;
+    #100
+    PAUSE = 0;
     
     #12000
-    LEFT = 1;
+    RIGHT = 1;
     #1000
-    LEFT = 0;
+    RIGHT = 0;
+    #24000
+    DOWN = 1;
   end
   
   always
